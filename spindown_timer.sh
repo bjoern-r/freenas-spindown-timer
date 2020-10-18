@@ -34,7 +34,7 @@
 
 TIMEOUT=3600       # Default timeout before considering a drive as idle
 POLL_TIME=600      # Default time to wait during a single iostat call
-IGNORED_DRIVES=""  # Default list of drives that are never spun down
+IGNORED_DRIVES="sde"  # Default list of drives that are never spun down
 MANUAL_MODE=0      # Default manual mode setting
 QUIET=0            # Default quiet mode setting
 VERBOSE=0          # Default verbosity level
@@ -47,15 +47,12 @@ declare -A DRIVES  # Associative array for detected drives
 function print_usage() {
     cat << EOF
 Usage: $0 [-h] [-q] [-v] [-d] [-m] [-t TIMEOUT] [-p POLL_TIME] [-i DRIVE]
-
 Monitors drive I/O and forces HDD spindown after a given idle period.
 Resistant to S.M.A.R.T. reads.
-
 A drive is considered as idle and is spun down if there has been no I/O
 operations on it for at least TIMEOUT seconds. I/O requests are detected
 during intervals with a length of POLL_TIME seconds. Detected reads or
 writes reset the drives timer back to TIMEOUT.
-
 Options:
   -q           : Quiet mode. Outputs are suppressed if flag is present.
   -v           : Verbose mode. Prints additonal information during execution.
@@ -72,11 +69,10 @@ Options:
                  In manual mode [-m]: Only monitor the specified drives.
                  Multiple drives can be given by repeating the -i switch.
   -h           : Print this help message.
-
 Example usage:
 $0
 $0 -q -t 3600 -p 600 -i ada0 -i ada1
-$0 -q -m -i ada6 -i ada7 -i da0
+$0 -q -m -i sda -i sdb -i hda
 EOF
 }
 
@@ -120,7 +116,7 @@ function detect_drives() {
         # In manual mode the ignored drives become the explicitly monitored drives
         DRIVE_IDS=" ${IGNORED_DRIVES} "
     else
-        DRIVE_IDS=`iostat -x | grep -E '^(ada|da)' | awk '{printf $1 " "}'`
+        DRIVE_IDS=`iostat -x | grep -E '^(hd|sd)' | awk '{printf $1 " "}'`
         DRIVE_IDS=" ${DRIVE_IDS} " # Space padding must be kept for pattern matching
 
         # Remove ignored drives
@@ -128,17 +124,15 @@ function detect_drives() {
             DRIVE_IDS=`sed "s/ ${drive} / /g" <<< ${DRIVE_IDS}`
         done
     fi
-
     # Detect protocol type (ATA or SCSI) for each drive and populate $DRIVES array
     for drive in ${DRIVE_IDS}; do
-        if [[ -n $(camcontrol identify $drive |& grep -E "^protocol(.*)ATA") ]]; then
+#        if [[ -n $(camcontrol identify $drive |& grep -E "^protocol(.*)ATA") ]]; then
             DRIVES[$drive]="ATA"
-        else
-            DRIVES[$drive]="SCSI"
-        fi
+#        else
+#            DRIVES[$drive]="SCSI"
+#        fi
     done
 }
-
 ##
 # Retrieves the list of identifiers (e.g. "ada0") for all monitored drives.
 # Drives listed in $IGNORE_DRIVES will be excluded.
@@ -148,7 +142,6 @@ function detect_drives() {
 function get_drives() {
     echo "${!DRIVES[@]}"
 }
-
 ##
 # Waits $1 seconds and returns a list of all drives that didn't
 # experience I/O operations during that period.
@@ -160,19 +153,14 @@ function get_drives() {
 ##
 function get_idle_drives() {
     # Wait for $1 seconds and get active drives
-    local IOSTAT_OUTPUT=`iostat -x -z -d $1 2`
-    local CUT_OFFSET=`grep -no "extended device statistics" <<< ${IOSTAT_OUTPUT} | tail -n1 | grep -Eo '^[^:]+'`
-    local ACTIVE_DRIVES=`tail -n +$((CUT_OFFSET+2)) <<< ${IOSTAT_OUTPUT} | awk '{printf $1}{printf " "}'`
-
+    local ACTIVE_DRIVES=`iostat -zyd $1 1 | tail -n +4 | awk '/sd|hd/{printf $1}{printf " "}'`
     # Remove active drives from list to get idle drives
     local IDLE_DRIVES=" $(get_drives) " # Space padding must be kept for pattern matching
     for drive in ${ACTIVE_DRIVES}; do
         IDLE_DRIVES=`sed "s/ ${drive} / /g" <<< ${IDLE_DRIVES}`
     done
-
     echo ${IDLE_DRIVES}
 }
-
 ##
 # Determines whether the given drive $1 understands ATA commands
 #
@@ -182,7 +170,6 @@ function get_idle_drives() {
 function is_ata_drive() {
     if [[ ${DRIVES[$1]} == "ATA" ]]; then echo 1; else echo 0; fi
 }
-
 ##
 # Determines whether the given drive $1 is spinning
 #
@@ -191,16 +178,11 @@ function is_ata_drive() {
 ##
 function drive_is_spinning() {
     if [[ $(is_ata_drive $1) -eq 1 ]]; then
-        if [[ -z $(camcontrol epc $1 -c status -P | grep 'Standby') ]]; then echo 1; else echo 0; fi
+        if [[ -z $(/sbin/hdparm -C /dev/$1 | grep 'active') ]]; then echo 0; else echo 1; fi
     else
-        # Reads STANDBY values from the power condition mode page (0x1a).
-        # THIS IS EXPERIMENTAL AND UNTESTED due to the lack of SCSI drives :(
-        #
-        # See: /usr/share/misc/scsi_modes and the "SCSI Commands Reference Manual"
-        if [[ -z $(camcontrol modepage $1 -m 0x1a |& grep -E "^STANDBY(.*)1") ]]; then echo 1; else echo 0; fi
+        echo "todo: scsi"
     fi
 }
-
 ##
 # Forces the spindown of the drive specified by parameter $1 trough camcontrol
 #
@@ -212,19 +194,17 @@ function spindown_drive() {
         if [[ $DRYRUN -eq 0 ]]; then
             if [[ $(is_ata_drive $1) -eq 1 ]]; then
                 # Spindown ATA drive
-                camcontrol standby $1
+                /sbin/hdparm -y /dev/$1
             else
                 # Spindown SCSI drive
-                camcontrol stop $1
+                echo "todo scsi"
             fi
         fi
-
         log "$(date '+%F %T') Spun down idle drive: $1"
     else
         log_verbose "$(date '+%F %T') Drive is already spun down: $1"
     fi
 }
-
 ##
 # Generates a list of all active timeouts
 ##
@@ -233,37 +213,30 @@ function get_drive_timeouts() {
     for x in "${!DRIVE_TIMEOUTS[@]}"; do printf "[%s]=%s " "$x" "${DRIVE_TIMEOUTS[$x]}" ; done
     echo ""
 }
-
 ##
 # Main program loop
 ##
 function main() {
     if [[ $DRYRUN -eq 1 ]]; then log "Performing a dry run..."; fi
-
     # Initially identify drives to monitor
     detect_drives
     for drive in ${!DRIVES[@]}; do
         log_verbose "Detected drive ${drive} as ${DRIVES[$drive]} device"
     done
-
     log "Monitoring drives with a timeout of ${TIMEOUT} seconds: $(get_drives)"
     log "I/O check sample period: ${POLL_TIME} sec"
-
     # Init timeout counters for all monitored drives
     declare -A DRIVE_TIMEOUTS
     for drive in $(get_drives); do
         DRIVE_TIMEOUTS[$drive]=${TIMEOUT}
     done
     log_verbose "$(get_drive_timeouts)"
-
     # Drive I/O monitoring loop
     while true; do
         local IDLE_DRIVES=$(get_idle_drives ${POLL_TIME})
-
         for drive in "${!DRIVE_TIMEOUTS[@]}"; do
             if [[ $IDLE_DRIVES =~ $drive ]]; then
                 DRIVE_TIMEOUTS[$drive]=$((DRIVE_TIMEOUTS[$drive] - POLL_TIME))
-
                 if [[ ! ${DRIVE_TIMEOUTS[$drive]} -gt 0 ]]; then
                     DRIVE_TIMEOUTS[$drive]=${TIMEOUT}
                     spindown_drive ${drive}
@@ -272,11 +245,9 @@ function main() {
                 DRIVE_TIMEOUTS[$drive]=${TIMEOUT}
             fi
         done
-
         log_verbose "$(get_drive_timeouts)"
     done
 }
-
 # Parse arguments
 while getopts ":hqvdmt:p:i:" opt; do
   case ${opt} in
@@ -302,5 +273,4 @@ while getopts ":hqvdmt:p:i:" opt; do
       ;;
   esac
 done
-
 main # Start main program
