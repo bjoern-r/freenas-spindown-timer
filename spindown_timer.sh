@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 
 # ##################################################
-# FreeNAS HDD Spindown Timer
+# Linux HDD Spindown Timer
 # Monitors drive I/O and forces HDD spindown after a given idle period.
 #
 # Version: 1.3.1
 #
-# See: https://github.com/ngandrass/freenas-spindown-timer
+# Inspired from See: https://github.com/ngandrass/freenas-spindown-timer
 #
 #
 # MIT License
 # 
 # Copyright (c) 2019 Niels Gandraß
+# Copyright (c) 2020 Bjoern Riemer
 # 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
