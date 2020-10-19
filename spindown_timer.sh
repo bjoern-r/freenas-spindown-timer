@@ -195,7 +195,7 @@ function spindown_drive() {
         if [[ $DRYRUN -eq 0 ]]; then
             if [[ $(is_ata_drive $1) -eq 1 ]]; then
                 # Spindown ATA drive
-                /sbin/hdparm -y /dev/$1
+                /sbin/hdparm -y /dev/$1 >/dev/null
             else
                 # Spindown SCSI drive
                 echo "todo scsi"
