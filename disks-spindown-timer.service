@@ -1,0 +1,8 @@
+[Unit]
+Description=Spindown Idle Disks
+
+[Service]
+ExecStart=/usr/local/bin/spindown_timer.sh -t 900 -p450
+
+[Install]
+WantedBy=default.target
