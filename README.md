@@ -1,3 +1,8 @@
+# note
+
+__This fork adds linux support to the spindown script.__
+
+
 # freenas-spindown-timer
 _Monitors drive I/O and forces HDD spindown after a given idle period. Resistant to S.M.A.R.T. reads._
 
